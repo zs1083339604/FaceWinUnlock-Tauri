@@ -36,18 +36,18 @@
                     <span>面容管理</span>
                 </el-menu-item>
 
-                <el-menu-item index="/init">
-                    <el-icon>
-                        <Tools />
-                    </el-icon>
-                    <span>系统初始化</span>
-                </el-menu-item>
-
-                <el-menu-item index="/settings">
+                <el-menu-item index="/options">
                     <el-icon>
                         <Setting />
                     </el-icon>
-                    <span>参数设置</span>
+                    <span>首选项</span>
+                </el-menu-item>
+
+				<el-menu-item index="/logs">
+                    <el-icon>
+						<Tickets />
+					</el-icon>
+                    <span>日志</span>
                 </el-menu-item>
             </el-menu>
 

@@ -1,19 +1,19 @@
 use std::{
     fs,
     io::{Read, Write},
+    path::PathBuf,
 };
 
-use crate::{utils::custom_result::CustomResult, AppState};
+use crate::{utils::custom_result::CustomResult, APP_STATE, ROOT_DIR};
 use base64::{engine::general_purpose, Engine};
 use opencv::{
-    core::{Mat, Point, Ptr, Rect, Scalar, Size, Vector},
+    core::{Mat, Point, Rect, Scalar, Size, Vector},
     imgcodecs, imgproc,
-    objdetect::{FaceDetectorYN, FaceRecognizerSF, FaceRecognizerSF_DisType},
+    objdetect::FaceRecognizerSF_DisType,
     prelude::*,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::Manager;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -59,9 +59,9 @@ struct CaptureResponse {
 
 // 从图片中检测人脸
 #[tauri::command]
-pub async fn check_face_from_img(
-    state: tauri::State<'_, AppState>,
+pub fn check_face_from_img(
     img_path: String,
+    face_detection_threshold: f32,
 ) -> Result<CustomResult, CustomResult> {
     // 从fs读取图片
     // opencv不支持中文，搞了半个小时 ...
@@ -78,20 +78,7 @@ pub async fn check_face_from_img(
         ));
     }
 
-    // 获取模型锁
-    let mut d_lock = state.detector.write().await;
-    let detector_wrapper = d_lock.as_mut();
-
-    if detector_wrapper.is_none() {
-        return Err(CustomResult::error(
-            Some(String::from("请先初始化模型")),
-            None,
-        ));
-    }
-    let detector_wrapper = detector_wrapper.unwrap();
-    let detector = &mut detector_wrapper.inner;
-
-    let result = detect_and_format(detector, src)
+    let result = detect_and_format(src, face_detection_threshold)
         .map_err(|e| CustomResult::error(Some(format!("OpenCV 检测失败: {}", e)), None))?;
 
     Ok(CustomResult::success(
@@ -105,26 +92,11 @@ pub async fn check_face_from_img(
 
 // 从摄像头中检测人脸
 #[tauri::command]
-pub async fn check_face_from_camera(
-    state: tauri::State<'_, AppState>,
-) -> Result<CustomResult, CustomResult> {
-    let frame = read_mat_from_camera(&state)
-        .await
+pub fn check_face_from_camera(face_detection_threshold: f32) -> Result<CustomResult, CustomResult> {
+    let frame = read_mat_from_camera()
         .map_err(|e| CustomResult::error(Some(format!("摄像头读取失败: {}", e)), None))?;
 
-    // 获取模型锁
-    let mut d_lock = state.detector.write().await;
-    let detector_wrapper = d_lock.as_mut();
-
-    if detector_wrapper.is_none() {
-        return Err(CustomResult::error(
-            Some(String::from("请先初始化模型")),
-            None,
-        ));
-    }
-    let detector_wrapper = detector_wrapper.unwrap();
-
-    let result = detect_and_format(&mut detector_wrapper.inner, frame)
+    let result = detect_and_format(frame, face_detection_threshold)
         .map_err(|e| CustomResult::error(Some(format!("OpenCV 检测失败: {}", e)), None))?;
 
     Ok(CustomResult::success(
@@ -139,11 +111,10 @@ pub async fn check_face_from_camera(
 // 一致性验证
 #[tauri::command]
 pub async fn verify_face(
-    state: tauri::State<'_, AppState>,
     reference_base64: String,
+    face_detection_threshold: f32,
 ) -> Result<CustomResult, CustomResult> {
-    let frame = read_mat_from_camera(&state)
-        .await
+    let frame = read_mat_from_camera()
         .map_err(|e| CustomResult::error(Some(format!("摄像头读取失败: {}", e)), None))?;
     // 解码图片
     let ref_bytes = general_purpose::STANDARD
@@ -153,29 +124,24 @@ pub async fn verify_face(
     let ref_img = imgcodecs::imdecode(&v, opencv::imgcodecs::IMREAD_COLOR)
         .map_err(|e| CustomResult::error(Some(format!("从bse64读取图片失败: {}", e)), None))?;
 
-    let mut d_lock = state.detector.write().await;
-    let mut r_lock = state.recognizer.write().await;
-    let detector = &mut d_lock
-        .as_mut()
-        .ok_or(CustomResult::error(
-            Some(String::from("检测模型未初始化")),
-            None,
-        ))?
-        .inner;
-    let recognizer = &mut r_lock
-        .as_mut()
-        .ok_or(CustomResult::error(
-            Some(String::from("识别模型未初始化")),
-            None,
-        ))?
-        .inner;
+    let ref_feature = get_feature(&ref_img, face_detection_threshold)
+        .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
+    let cur_feature = get_feature(&frame, face_detection_threshold)
+        .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
 
-    let ref_feature = get_feature(&ref_img, detector, recognizer)
-        .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
-    let cur_feature = get_feature(&frame, detector, recognizer)
-        .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
+    let app_state = APP_STATE
+        .lock()
+        .map_err(|e| CustomResult::error(Some(format!("获取app状态失败 {}", e)), None))?;
+
+    let Some(recognizer) = app_state.recognizer.as_ref() else {
+        return Err(CustomResult::error(
+            Some(String::from("人脸识别模型未初始化")),
+            None,
+        ));
+    };
 
     let score = recognizer
+        .inner
         .match_(
             &ref_feature,
             &cur_feature,
@@ -200,17 +166,13 @@ pub async fn verify_face(
 
 // 保存特征到文件
 #[tauri::command]
-pub async fn save_face_registration(
-    handle: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
+pub fn save_face_registration(
     name: String,
     reference_base64: String,
+    face_detection_threshold: f32,
 ) -> Result<CustomResult, CustomResult> {
     // 获取软件数据目录并创建 faces 文件夹
-    let path = handle
-        .path()
-        .resolve("faces", tauri::path::BaseDirectory::Resource)
-        .map_err(|e| CustomResult::error(Some(format!("获取软件数据目录失败: {}", e)), None))?;
+    let path = ROOT_DIR.join("faces");
 
     if !path.exists() {
         std::fs::create_dir_all(&path).map_err(|e| {
@@ -226,24 +188,7 @@ pub async fn save_face_registration(
     let ref_img = imgcodecs::imdecode(&v, opencv::imgcodecs::IMREAD_COLOR)
         .map_err(|e| CustomResult::error(Some(format!("从bse64读取图片失败: {}", e)), None))?;
 
-    let mut d_lock = state.detector.write().await;
-    let mut r_lock = state.recognizer.write().await;
-    let detector = &mut d_lock
-        .as_mut()
-        .ok_or(CustomResult::error(
-            Some(String::from("检测模型未初始化")),
-            None,
-        ))?
-        .inner;
-    let recognizer = &mut r_lock
-        .as_mut()
-        .ok_or(CustomResult::error(
-            Some(String::from("识别模型未初始化")),
-            None,
-        ))?
-        .inner;
-
-    let feature_mat = get_feature(&ref_img, detector, recognizer)
+    let feature_mat = get_feature(&ref_img, face_detection_threshold)
         .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
 
     let descriptor = FaceDescriptor::from_mat(&name, &feature_mat)
@@ -289,26 +234,50 @@ pub async fn save_face_registration(
 }
 
 // 提取特征点
-fn get_feature(
-    img: &Mat,
-    det: &mut Ptr<FaceDetectorYN>,
-    rec: &mut Ptr<FaceRecognizerSF>,
-) -> Result<Mat, String> {
-    let mut faces = Mat::default();
-    det.set_input_size(img.size().map_err(|e| format!("获取Mat尺寸失败: {}", e))?)
-        .map_err(|e| format!("设置输入尺寸失败: {}", e))?;
-    det.detect(img, &mut faces)
-        .map_err(|e| format!("OpenCV 检测失败: {}", e))?;
+pub fn get_feature(img: &Mat, face_detection_threshold: f32) -> Result<Mat, String> {
+    let mut app_state = APP_STATE
+        .lock()
+        .map_err(|e| format!("获取app状态失败 {}", e))?;
+
+    if app_state.detector.is_none() {
+        return Err(String::from("人脸检测模型未初始化"));
+    }
+    if app_state.recognizer.is_none() {
+        return Err(String::from("人脸识别模型未初始化"));
+    }
+
+    let faces = {
+        let detector = app_state.detector.as_mut().unwrap();
+        let mut faces = Mat::default();
+        detector
+            .inner
+            .set_input_size(img.size().map_err(|e| format!("获取Mat尺寸失败: {}", e))?)
+            .map_err(|e| format!("设置输入尺寸失败: {}", e))?;
+        detector
+            .inner
+            .set_score_threshold(face_detection_threshold)
+            .map_err(|e| format!("设置分数阈值失败: {}", e))?;
+        detector
+            .inner
+            .detect(img, &mut faces)
+            .map_err(|e| format!("OpenCV 检测失败: {}", e))?;
+        faces
+    };
 
     if faces.rows() > 0 {
         let mut aligned = Mat::default();
         let mut feature = Mat::default();
 
+        let recognizer = app_state.recognizer.as_mut().unwrap();
         // 人脸对齐与裁剪
-        rec.align_crop(img, &faces.row(0).unwrap(), &mut aligned)
+        recognizer
+            .inner
+            .align_crop(img, &faces.row(0).unwrap(), &mut aligned)
             .map_err(|e| format!("人脸对齐失败: {}", e))?;
         // 提取特征
-        rec.feature(&aligned, &mut feature)
+        recognizer
+            .inner
+            .feature(&aligned, &mut feature)
             .map_err(|e| format!("特征提取失败: {}", e))?;
 
         Ok(feature.clone())
@@ -318,14 +287,17 @@ fn get_feature(
 }
 
 // 从摄像头中读取视频帧
-async fn read_mat_from_camera(state: &tauri::State<'_, AppState>) -> Result<Mat, String> {
-    let mut cam_lock = state.camera.write().await;
+pub fn read_mat_from_camera() -> Result<Mat, String> {
+    let mut app_state = APP_STATE
+        .lock()
+        .map_err(|e| format!("获取app状态失败 {}", e))?;
+
     // 如果摄像头没打开
-    if cam_lock.is_none() {
+    if app_state.camera.is_none() {
         return Err(String::from("请先打开摄像头"));
     }
 
-    let cam = cam_lock.as_mut().unwrap();
+    let cam = app_state.camera.as_mut().unwrap();
     let mut frame = Mat::default();
 
     cam.inner
@@ -367,10 +339,15 @@ fn resize_mat(src: &Mat, max_dim: f32) -> Result<Mat, String> {
 }
 
 // 处理人脸特征点
-fn detect_and_format(
-    detector: &mut Ptr<FaceDetectorYN>,
-    src: Mat,
-) -> Result<CaptureResponse, String> {
+fn detect_and_format(src: Mat, face_detection_threshold: f32) -> Result<CaptureResponse, String> {
+    let mut app_state = APP_STATE
+        .lock()
+        .map_err(|e| format!("获取app状态失败 {}", e))?;
+
+    let Some(detector) = app_state.detector.as_mut() else {
+        return Err(String::from("人脸检测模型未初始化"));
+    };
+
     // 等比例缩放
     let raw_mat = resize_mat(&src, 800.0)?;
 
@@ -378,6 +355,7 @@ fn detect_and_format(
     let mut display_mat = raw_mat.clone(); // 用于显示的副本
     let mut faces = Mat::default();
     detector
+        .inner
         .set_input_size(
             display_mat
                 .size()
@@ -385,6 +363,11 @@ fn detect_and_format(
         )
         .map_err(|e| format!("设置输入尺寸失败: {}", e))?;
     detector
+        .inner
+        .set_score_threshold(face_detection_threshold)
+        .map_err(|e| format!("设置分数阈值失败: {}", e))?;
+    detector
+        .inner
         .detect(&display_mat, &mut faces)
         .map_err(|e| format!("OpenCV 检测失败: {}", e))?;
 
@@ -460,7 +443,7 @@ fn save_face_data(
 }
 
 // 从文件加载人脸数据
-fn load_face_data(path: &str) -> Result<FaceDescriptor, Box<dyn std::error::Error>> {
+pub fn load_face_data(path: &PathBuf) -> Result<FaceDescriptor, Box<dyn std::error::Error>> {
     let mut file = std::fs::File::open(path)?;
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer)?;

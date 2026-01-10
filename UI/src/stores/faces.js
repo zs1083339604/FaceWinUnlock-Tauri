@@ -125,6 +125,18 @@ export const useFacesStore = defineStore('faces', {
             return result;
         },
         /**
+         * 传入面容ID，返回面容别名
+         * @param {Number} id 面容id
+         * @returns {String} 面容别名
+         */
+        getFaceAliasById(id){
+            let result = this.getFaceById(id);
+            if(result){
+                return result.json_data.alias;
+            }
+            return '无';
+        },
+        /**
          * 添加面容信息到本地列表
          * @param {Object} data 面容数据（与数据库数据一致）
          */

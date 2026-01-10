@@ -1,5 +1,5 @@
 <script setup lang="ts">
-    import { reactive, ref, onMounted, computed } from 'vue';
+    import { reactive, ref, onMounted, computed, onUnmounted } from 'vue';
     import { ElMessage, ElMessageBox } from 'element-plus';
     import AccountAuthForm from '../../components/AccountAuthForm.vue';
     import { open } from '@tauri-apps/plugin-dialog';
@@ -9,10 +9,12 @@
     import { useRoute, useRouter } from 'vue-router';
     import { info, error as errorLog, warn } from '@tauri-apps/plugin-log';
     import { useFacesStore } from '../../stores/faces';
+    import { useOptionsStore } from '../../stores/options';
 
     const route = useRoute();
     const router = useRouter();
     const facesStore = useFacesStore();
+    const optionsStore = useOptionsStore();
 
     const faceName = ref('');
     const threshold = ref(40);
@@ -34,7 +36,7 @@
     let editFaceData = null;
     // 修改面容时，是否修改了图片
     let isEditFaceImage = false;
-    // const faceDetectionThreshold = ref(90); // cy:  人脸识别度，暂时废弃，等设置页面写好在说
+    const faceDetectionThreshold = ref(90);
 
     let authForm = reactive({
         accountType: 'local',
@@ -56,6 +58,7 @@
                 // 添加其他信息
                 faceName.value = editFaceData.json_data.alias;
                 threshold.value = editFaceData.json_data.threshold;
+                faceDetectionThreshold.value = editFaceData.json_data.faceDetectionThreshold * 100;
                 // 添加人脸信息
                 loadFaceFormPath(localStorage.getItem("exe_dir") + "\\faces\\"+editFaceData.face_token+".faceimg").catch((error)=>{
                     const info = formatObjectString("载入图片失败：", error);
@@ -75,6 +78,10 @@
             })
         }
     });
+
+    onUnmounted(async ()=>{
+        await stopCamera();
+    })
 
     const handleSelectFile = async () => {
         try {
@@ -101,7 +108,7 @@
     };
 
     async function loadFaceFormPath(path){
-        const result = await invoke("check_face_from_img", { imgPath: path });
+        const result = await invoke("check_face_from_img", { imgPath: path, faceDetectionThreshold: getFaceDetectionThresholdValue() });
             
         capturedImage.value = result.data.display_base64;
         rawImageForSystem = result.data.raw_base64;
@@ -110,7 +117,11 @@
     }
 
     const startCamera = () => {
-        invoke("open_camera").then(()=>{
+        let cameraIndex = parseInt(optionsStore.getOptionValueByKey("camera"));
+        if(isNaN(cameraIndex)){
+            cameraIndex = 0;
+        }
+        invoke("open_camera", { backend: null, camearIndex: cameraIndex }).then(()=>{
             isCameraStreaming.value = true;
             isLoopRunning = true;
             streamLoop();
@@ -127,12 +138,12 @@
         try {
             if(!verificationMode.value){
                 // 面容录入
-                const res = await invoke('check_face_from_camera');
+                const res = await invoke('check_face_from_camera', {faceDetectionThreshold: getFaceDetectionThresholdValue()});
                 capturedImage.value = res.data.display_base64;
                 rawImageForSystem = res.data.raw_base64;
             } else {
                 // 一致性对比
-                const res = await invoke('verify_face', { referenceBase64: rawImageForSystem.split(',')[1] });
+                const res = await invoke('verify_face', { referenceBase64: rawImageForSystem.split(',')[1], faceDetectionThreshold: getFaceDetectionThresholdValue() });
                 if(res.data.display_base64) {
                     verifyingStreamImage.value = res.data.display_base64;
                 }
@@ -195,7 +206,11 @@
     const toggleVerification = () => {
         verificationMode.value = !verificationMode.value;
         if (verificationMode.value) {
-            invoke("open_camera").then(()=>{
+            let cameraIndex = parseInt(optionsStore.getOptionValueByKey("camera"));
+            if(isNaN(cameraIndex)){
+                cameraIndex = 0;
+            }
+            invoke("open_camera", { backend: null, camearIndex: cameraIndex }).then(()=>{
                 isLoopRunning = true;
                 streamLoop();
             }).catch((error)=>{
@@ -250,6 +265,7 @@
                 authForm.accountType == editFaceData.account_type &&
                 faceName.value == editFaceData.json_data.alias &&
                 threshold.value == editFaceData.json_data.threshold &&
+                getFaceDetectionThresholdValue() == editFaceData.json_data.faceDetectionThreshold &&
                 !isEditFaceImage
             ){
                 // 没有任何变化，直接成功
@@ -269,7 +285,7 @@
         }else{
             // 如果非编辑模式，或者编辑模式修改了图片
             try {
-                const result = await invoke("save_face_registration", {name: faceName.value || '', referenceBase64: rawImageForSystem.split(',')[1]});
+                const result = await invoke("save_face_registration", {name: faceName.value || '', referenceBase64: rawImageForSystem.split(',')[1], faceDetectionThreshold: getFaceDetectionThresholdValue()});
                 face_token = result.data.file_name;
             } catch (error) {
                 const info = formatObjectString("存储面容失败：", error);
@@ -291,7 +307,8 @@
                     "json_data": JSON.stringify({
                         threshold: threshold.value,
                         alias: faceName.value || '',
-                        view: true
+                        view: true,
+                        faceDetectionThreshold: getFaceDetectionThresholdValue()
                     })
                 });
             } else {
@@ -303,7 +320,8 @@
                     "json_data": JSON.stringify({
                         threshold: threshold.value,
                         alias: faceName.value || '',
-                        view: editFaceData.json_data.view ? editFaceData.json_data.view : true
+                        view: editFaceData.json_data.view ? editFaceData.json_data.view : true,
+                        faceDetectionThreshold: getFaceDetectionThresholdValue()
                     })
                 }, targetId);
 
@@ -325,6 +343,12 @@
             isProcessing.value = false;
         }
     };
+
+    // 处理 faceDetectionThreshold 的值，确保 / 100 在2位小数之间
+    // JS的除法真的不敢恭维，太不靠谱了
+    function getFaceDetectionThresholdValue(){
+        return parseFloat((faceDetectionThreshold.value / 100).toFixed(2));
+    }
 </script>
 
 <template>
@@ -361,8 +385,7 @@
                     </div>
 
                     <div class="action-bar">
-                        <!-- cy: 人脸识别度，暂时废弃，等设置页面写好在说 -->
-                        <!-- <div class="detection-config">
+                        <div class="detection-config">
                             <span class="label">检测灵敏度</span>
                             <el-slider 
                                 v-model="faceDetectionThreshold" 
@@ -373,7 +396,7 @@
                             <el-tooltip content="控制摄像头识别出人脸的难易程度" placement="top">
                                 <el-icon :size="14" style="margin-left: 5px; cursor: help;"><QuestionFilled /></el-icon>
                             </el-tooltip>
-                        </div> -->
+                        </div>
                         <div class="capture-controls" v-if="!verificationMode">
                             <template v-if="!isCameraStreaming">
                                 <el-button 

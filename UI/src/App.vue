@@ -22,17 +22,16 @@
 	// 打包时注释
 	attachConsole();
 
-	// 初始化SQL数据库
-	connect().then(()=>{
+	resourceDir().then((result)=>{
+		localStorage.setItem('exe_dir', result);
+		return connect();
+	}).then(()=>{
 		return optionsStore.init();
 	}).then(()=>{
 		return invoke("init_model");
 	}).then(()=>{
 		return facesStore.init();
 	}).then(()=>{
-		return resourceDir();
-	}).then((result)=>{
-		localStorage.setItem('exe_dir', result);
 		let is_initialized = optionsStore.getOptionByKey('is_initialized');
 		if(is_initialized.index == -1 || is_initialized.data.val != 'true'){
 			warn("程序未初始化，强制跳转初始化界面");

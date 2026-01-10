@@ -1,7 +1,7 @@
 // 引入必要的Win32 API和同步原语
 use windows::Win32::{Foundation::{HANDLE, STATUS_SUCCESS}, Security::Authentication::Identity::{LsaConnectUntrusted, LsaDeregisterLogonProcess, LsaLookupAuthenticationPackage, LSA_STRING}, Storage::FileSystem::{CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_GENERIC_READ, FILE_SHARE_NONE, OPEN_EXISTING}, UI::Shell::*};
 use std::sync::{atomic::Ordering, Arc, Mutex};
-use crate::{dll_add_ref, dll_release, CPipeListener::CPipeListener, CSampleCredential::SampleCredential, SharedCredentials};
+use crate::{dll_add_ref, dll_release, read_facewinunlock_registry, CPipeListener::CPipeListener, CSampleCredential::SampleCredential, SharedCredentials};
 use windows_core::{implement, BOOL, PSTR, PWSTR};
 
 /// 凭据提供程序主类，负责管理凭据和与系统交互
@@ -187,8 +187,19 @@ impl ICredentialProvider_Impl for SampleProvider_Impl {
     ) -> windows_core::Result<()> {
         info!("SampleProvider::GetCredentialCount - 获取凭据数量");
         let inner = self.inner.lock().unwrap();
+        let mut show_tile = true;
+        if let Ok(result) = read_facewinunlock_registry("SHOW_TILE") {
+            if result.as_str() == "0" {
+                show_tile = false;
+            }
+        } else {
+            warn!("注册表配置读取失败!");
+        }
+
+        info!( "是否显示图标: {}", show_tile);
+
         unsafe {
-            *pdwcount = 1;
+            *pdwcount = if show_tile { 1 } else { 0 };
             // 如果管道已经收到了数据，告诉系统我们要自动登录
             if let Some(l) = &inner.listener {
                 if l.is_unlocked.load(Ordering::SeqCst) {

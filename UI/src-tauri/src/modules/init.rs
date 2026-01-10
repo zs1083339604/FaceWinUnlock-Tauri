@@ -1,7 +1,14 @@
-use crate::utils::custom_result::CustomResult;
+use crate::modules::options::{write_to_registry, RegistryItem};
+use crate::{
+    utils::{
+        api::{check_global_autostart, disable_global_autostart},
+        custom_result::CustomResult,
+    },
+    ROOT_DIR,
+};
 use opencv::videoio::{self, VideoCaptureTraitConst};
+use serde_json::json;
 use std::fs;
-use tauri::Manager;
 use windows::Win32::{
     Foundation::{CloseHandle, HANDLE},
     Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY},
@@ -73,18 +80,12 @@ pub fn check_camera_status() -> Result<CustomResult, CustomResult> {
 
 // 复制 DLL 并写入注册表
 #[tauri::command]
-pub fn deploy_core_components(handle: tauri::AppHandle) -> Result<CustomResult, CustomResult> {
+pub fn deploy_core_components() -> Result<CustomResult, CustomResult> {
     let dll_name = "FaceWinUnlock-Tauri.dll";
     let target_path = format!("C:\\Windows\\System32\\{}", dll_name);
 
     // 获取 resources 中的 DLL 路径
-    let resource_path = handle
-        .path()
-        .resolve(
-            format!("resources/{}", dll_name),
-            tauri::path::BaseDirectory::Resource,
-        )
-        .map_err(|e| CustomResult::error(Some(format!("路径解析失败: {}", e)), None))?;
+    let resource_path = ROOT_DIR.join("resources").join(dll_name);
 
     // 检查资源文件是否存在
     if !resource_path.exists() {
@@ -156,6 +157,68 @@ pub fn deploy_core_components(handle: tauri::AppHandle) -> Result<CustomResult, 
                 None,
             )
         })?;
+
+    // 创建dll日志路径
+    let path = ROOT_DIR.join("logs");
+    if !path.exists() {
+        fs::create_dir_all(&path)
+            .map_err(|e| CustomResult::error(Some(format!("创建 logs 文件夹失败: {}", e)), None))?;
+    }
+
+    let path_str = path.to_str();
+    if path_str.is_none() {
+        return Err(CustomResult::error(
+            Some(String::from("获取软件日志目录失败")),
+            None,
+        ));
+    }
+    // 写入dll日志路径
+    write_to_registry(vec![RegistryItem {
+        key: String::from("DLL_LOG_PATH"),
+        value: path_str.unwrap().to_string(),
+    }])?;
+
+    Ok(CustomResult::success(None, None))
+}
+
+// 卸载dll
+#[tauri::command]
+pub fn uninstall_init() -> Result<CustomResult, CustomResult> {
+    // 删除注册表
+    const MAIN_REG_PATH: &str = "SOFTWARE\\facewinunlock-tauri";
+    const CLSID: &str = "{8a7b9c6d-4e5f-89a0-8b7c-6d5e4f3e2d1c}";
+
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let hkcr = RegKey::predef(HKEY_CLASSES_ROOT);
+
+    // 删除 Credential Providers 下的 CLSID 项（递归删除）
+    let cp_path = format!(
+        "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Authentication\\Credential Providers\\{}",
+        CLSID
+    );
+    hklm.delete_subkey_all(&cp_path)
+        .map_err(|e| CustomResult::error(Some(format!("删除注册表项(CP)失败: {}", e)), None))?;
+
+    // 删除 CLSID 根项（递归删除）
+    let clsid_path = format!("CLSID\\{}", CLSID);
+    hkcr.delete_subkey_all(&clsid_path)
+        .map_err(|e| CustomResult::error(Some(format!("删除注册表项(CLSID)失败: {}", e)), None))?;
+
+    // 删除程序DLL设置的注册表
+    hklm.delete_subkey_all(MAIN_REG_PATH)
+        .map_err(|e| CustomResult::error(Some(format!("删除注册表项(DLL)失败: {}", e)), None))?;
+
+    // 清除自启动
+    let result = check_global_autostart()?;
+    if *result.data.get("enable").unwrap() == json!(true) {
+        disable_global_autostart()?;
+    }
+
+    // 删除dll文件
+    let dll_name = "FaceWinUnlock-Tauri.dll";
+    let target_path = format!("C:\\Windows\\System32\\{}", dll_name);
+    fs::remove_file(target_path)
+        .map_err(|e| CustomResult::error(Some(format!("删除DLL失败: {}", e)), None))?;
 
     Ok(CustomResult::success(None, None))
 }

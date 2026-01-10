@@ -18,7 +18,10 @@
     "fs:default",
     {
       "identifier": "fs:allow-exists",
-      "allow": [{ "path": "$RESOURCE/faces/**" }]
+      "allow": [
+        { "path": "$RESOURCE/faces/**" },
+        { "path": "$RESOURCE/logs/**" }
+      ]
     },
     {
       "identifier": "fs:allow-read-file",
@@ -26,7 +29,7 @@
     },
     {
       "identifier": "fs:allow-read-text-file",
-      "allow": [{ "path": "$RESOURCE/faces/**" }]
+      "allow": [{ "path": "$RESOURCE/logs/**" }]
     },
     {
       "identifier": "fs:allow-remove",

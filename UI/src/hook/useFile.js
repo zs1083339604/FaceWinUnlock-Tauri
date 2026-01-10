@@ -1,4 +1,4 @@
-import { exists as existsFile, readFile, remove as removeFile } from '@tauri-apps/plugin-fs';
+import { exists as existsFile, readFile, remove as removeFile, readTextFile, readTextFileLines } from '@tauri-apps/plugin-fs';
 import { formatObjectString } from '../utils/function';
 import { error as errorLog } from '@tauri-apps/plugin-log';
 export function useFile() {
@@ -63,9 +63,31 @@ export function useFile() {
         });
     }
 
+    /**
+     * 把文件读取成txt并返回
+     * @param {String} path 文件路径
+     * @returns {Promise<string>} 文本数据
+     */
+    const readText = (path) => {
+        const fullPath = baseDir + path;
+        return new Promise((resolve, reject) => {
+            existsFile(fullPath).then(()=>{
+                // 读取文件
+                return readTextFile(fullPath);
+            }).then((data)=>{
+                resolve(data);
+            }).catch((error)=>{
+                const info = formatObjectString("文件读取失败：", error);
+                errorLog(info);
+                reject(info);
+            })
+        });
+    }
+
     return {
         exists,
         read,
-        reomve
+        reomve,
+        readText
     };
 }

@@ -1,6 +1,7 @@
 import Database from '@tauri-apps/plugin-sql';
 import { formatObjectString } from './function'
 import { info, error as errorLog, warn } from '@tauri-apps/plugin-log';
+import { executableDir, join } from '@tauri-apps/api/path';
 
 let db = null;
 let isConnect = false;
@@ -37,9 +38,22 @@ const databseTable = [
             // alias 面容别名
             // threshold 置信度
             // view 是否在列表页显示图片缩略图
+            // faceDetectionThreshold 人脸的置信度
             { name: 'json_data', type: 'TEXT', notNull: true },
             // 创建时间
             { name: 'createTime', type: 'TEXT', defaultValue: "datetime('now', 'localtime')" }
+        ]
+    },{
+        // 解锁记录
+        name: 'unlock_log',
+        columns: [
+            { name: 'id', type: 'INTEGER', primaryKey: true, autoIncrement: true, notNull: true },
+            // 面容ID
+            { name: 'face_id', type: 'INTEGER' },
+            // 是否成功解锁
+            { name: 'is_unlock', type: 'INTEGER', notNull: true },
+            // 上次更新时间
+            { name: 'lastTime', type: 'TEXT', defaultValue: "datetime('now', 'localtime')" }
         ]
     }
 ];
@@ -71,8 +85,9 @@ async function connect() {
         return; // 已连接则直接返回一个已解析的Promise
     }
     try {
+
         // 建立连接
-        db = await Database.load('sqlite:database.db');
+        db = await Database.load(`sqlite:${localStorage.getItem("exe_dir")}\\database.db`);
         
         // 遍历所有表定义并进行初始化/同步
         for (const tableDef of databseTable) {

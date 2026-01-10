@@ -43,6 +43,10 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine"
+      },
+      "webviewInstallMode": {
+        "type": "fixedRuntime",
+        "path": "bin/Microsoft.WebView2.FixedVersionRuntime.143.0.3650.139.x64.cab" 
       }
     }
   }

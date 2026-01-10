@@ -43,7 +43,7 @@ export const useOptionsStore = defineStore('options', {
          */
         getOptionValueByKey(key){
             const result = this.getOptionByKey(key);
-            return result.data ? result.data.value : null;
+            return result.data ? result.data.val : null;
         },
         /**
          * 保存设置，如果库中已存在，则会替换，否则会添加
@@ -56,7 +56,6 @@ export const useOptionsStore = defineStore('options', {
 
                 for (const key in optionObject) {
                     const element = optionObject[key];
-    
                     // 根据key查找配置项
                     const result = this.getOptionByKey(key);
     

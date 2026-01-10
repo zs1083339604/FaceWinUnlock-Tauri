@@ -31,3 +31,5 @@ test.css
 target
 UI/src-tauri/2
 UI.zip
+UI/src-tauri/bin/Microsoft.WebView2.FixedVersionRuntime.143.0.3650.139.x64.cab
+UI/src-tauri/nsis/installer.nsi
