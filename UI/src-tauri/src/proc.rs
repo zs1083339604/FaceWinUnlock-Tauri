@@ -1,4 +1,4 @@
-use opencv::{objdetect::FaceRecognizerSF_DisType, prelude::FaceRecognizerSFTraitConst};
+use opencv::{objdetect::FaceRecognizerSF_DisType, prelude::FaceRecognizerSFTraitConst, prelude::VectorToVec};
 use serde::Deserialize;
 use std::{sync::atomic::Ordering, thread::sleep, time::{Duration, SystemTime, UNIX_EPOCH}};
 use tauri_plugin_log::log::{error, info, warn};
@@ -14,7 +14,10 @@ use windows::{core::HSTRING, Win32::{
 }};
 
 use crate::{
-    modules::faces::{get_feature, load_face_data, read_mat_from_camera}, utils::{api::{open_camera, stop_camera, unlock}, pipe::{read, Client, Server}}, APP_STATE, CAMERA_INDEX, DB_POOL, IS_BREAK_THREAD, IS_LOCKED, IS_RUN, MATCH_FAIL_COUNT, RETRY_DELAY, ROOT_DIR, TIMER_ID_LOCK_CHECK
+    modules::faces::{get_feature, load_face_data, read_mat_from_camera}, 
+    utils::{api::{open_camera, stop_camera, unlock}, pipe::{read, Client, Server}}, 
+    liveness,
+    APP_STATE, CAMERA_INDEX, DB_POOL, IS_BREAK_THREAD, IS_LOCKED, IS_RUN, MATCH_FAIL_COUNT, RETRY_DELAY, ROOT_DIR, TIMER_ID_LOCK_CHECK
 };
 
 // 最大成功次数，超过这个次数判断为面容匹配
@@ -452,17 +455,89 @@ fn run() -> Result<bool, String> {
                         // 匹配成功，次数+1
                         success_count += 1;
                         if success_count >= MAX_SUCCESS {
-                            // 大于3次，算面容匹配成功
+                            // 大于3次，算面容匹配成功，进行活体检测
                             let user_name = if account_type == "local" {
                                 format!(".\\{}", user_name)
                             } else {
                                 user_name
                             };
 
+                            // 从数据库读取活体检测开关配置
+                            let liveness_enabled = conn.query_row(
+                                "SELECT val FROM options WHERE key = 'livenessEnabled';",
+                                [],
+                                |row| row.get::<&str, String>("val"),
+                            ).unwrap_or(String::from("true"));
+
+                            let liveness_enabled = liveness_enabled == "true";
+
+                            // 获取活体检测阈值
+                            let liveness_threshold: f32 = conn.query_row(
+                                "SELECT val FROM options WHERE key = 'livenessThreshold';",
+                                [],
+                                |row| row.get::<&str, String>("val"),
+                            ).unwrap_or(String::from("0.50"))
+                            .parse()
+                            .unwrap_or(0.50);
+
+                            info!("活体检测配置: enabled={}, threshold={}", liveness_enabled, liveness_threshold);
+
+                            // 如果活体检测开关开启，进行活体检测
+                            let mut liveness_passed = true;
+                            let mut liveness_confidence = 1.0;
+
+                            info!("准备进行活体检测, liveness_enabled={}", liveness_enabled);
+
+                            if liveness_enabled {
+                                info!("开始执行活体检测...");
+                                // 将当前帧编码为JPEG进行活体检测
+                                let mut frame_copy = frame.clone();
+                                // JPEG 质量参数 95
+                                let mut encode_params = opencv::core::Vector::<i32>::new();
+                                encode_params.push(9);  // IMWRITE_JPEG_QUALITY = 9
+                                encode_params.push(95); // 质量 95
+
+                                let mut liveness_img_buf = opencv::core::Vector::<u8>::new();
+                                opencv::imgcodecs::imencode(".jpg", &mut frame_copy, &mut liveness_img_buf, &encode_params)
+                                    .map_err(|e| format!("图片编码失败: {}", e))?;
+
+                                let img_data = liveness_img_buf.to_vec();
+                                info!("开始活体检测, 图片大小: {} bytes", img_data.len());
+
+                                // 调用本地活体检测
+                                let (is_live, confidence) = liveness::check_liveness(&img_data);
+                                liveness_confidence = confidence;
+
+                                info!("活体检测结果: is_live={}, confidence={:.4}", is_live, liveness_confidence);
+
+                                // 检查置信度是否达到阈值
+                                // confidence 是真人置信度，threshold 是要求的最低真人置信度
+                                if !is_live || liveness_confidence <= liveness_threshold {
+                                    liveness_passed = false;
+                                    warn!("活体检测失败: is_live={}, confidence={:.4}, threshold={}", is_live, liveness_confidence, liveness_threshold);
+                                } else {
+                                    info!("活体检测通过: confidence={:.4}, threshold={}", liveness_confidence, liveness_threshold);
+                                }
+                            } else {
+                                info!("活体检测已关闭，跳过检测");
+                            }
+
+                            // 如果活体检测失败，记录为假脸拦截
+                            if !liveness_passed {
+                                if let Err(e) = insert_unlock_log(&conn, id, false, Some(liveness_confidence), Some("假脸攻击".to_string())) {
+                                    warn!("插入活体检测失败日志失败：{}", e);
+                                }
+                                // 匹配失败，次数+1
+                                let now_count = MATCH_FAIL_COUNT.load(Ordering::SeqCst);
+                                MATCH_FAIL_COUNT.store(now_count + 1, Ordering::SeqCst);
+                                return Ok(false);
+                            }
+
+                            // 活体检测通过，执行解锁
                             if let Err(e) = unlock(user_name, user_pwd) {
                                 return Err(format!("调用解锁函数失败：{}", e));
                             } else {
-                                if let Err(e) = insert_unlock_log(&conn, id, true) {
+                                if let Err(e) = insert_unlock_log(&conn, id, true, Some(liveness_confidence), None) {
                                     warn!("插入解锁日志失败：{}", e);
                                 };
                                 return Ok(true);
@@ -483,7 +558,7 @@ fn run() -> Result<bool, String> {
             if let Err(e) = unlock(String::from("null"), String::from("null")) {
                 return Err(format!("调用解锁函数失败：{}", e));
             }
-            if let Err(e) = insert_unlock_log(&conn, -1, false) {
+            if let Err(e) = insert_unlock_log(&conn, -1, false, None, Some("人脸不匹配".to_string())) {
                 warn!("插入解锁日志失败：{}", e);
             };
             // 匹配失败，次数+1
@@ -505,16 +580,20 @@ fn insert_unlock_log(
     conn: &r2d2_sqlite::rusqlite::Connection,
     face_id: i32,
     is_unlock: bool,
+    liveness_confidence: Option<f32>,
+    fail_reason: Option<String>,
 ) -> Result<(), String> {
     let mut insert_stmt = conn
-        .prepare("INSERT INTO unlock_log (face_id, is_unlock) VALUES (?1, ?2)")
+        .prepare("INSERT INTO unlock_log (face_id, is_unlock, liveness_confidence, fail_reason) VALUES (?1, ?2, ?3, ?4)")
         .map_err(|e| format!("准备插入解锁日志语句失败：{:?}", e))?;
 
     // 插入数据
     insert_stmt
         .execute(r2d2_sqlite::rusqlite::params![
             face_id,
-            if is_unlock { 1 } else { 0 }
+            if is_unlock { 1 } else { 0 },
+            liveness_confidence,
+            fail_reason
         ])
         .map_err(|e| format!("插入解锁日志失败：{:?}", e))?;
     Ok(())

@@ -1,25 +1,27 @@
 <script setup lang="ts">
-    import { ref, reactive } from 'vue';
+    import { ref, reactive, onMounted } from 'vue';
 	import { ArrowRight } from '@element-plus/icons-vue';
 	import { useOptionsStore } from '../stores/options';
 	import { useFacesStore } from '../stores/faces';
 	import { useUnlockLog } from '../hook/useUnlockLog';
 	import { ElMessage } from 'element-plus';
+	import { invoke } from '@tauri-apps/api/core';
 
 	const optionsStore = useOptionsStore();
 	const facesStore = useFacesStore();
 	const { queryTodayLogs } = useUnlockLog();
 
 	const statistics = reactive([
-		{ label: '库内面容样本', value: facesStore.faceList.length, total: '无限', unit: '个', icon: 'User', color: '#409EFF', shadow: 'rgba(64, 158, 255, 0.2)' },
+		{ label: '人脸数', value: facesStore.faceList.length,  unit: '个', icon: 'User', color: '#409EFF', shadow: 'rgba(64, 158, 255, 0.2)' },
 		{ label: '今日登录成功', value: '-', unit: '次', icon: 'CircleCheck', color: '#67C23A', shadow: 'rgba(103, 194, 58, 0.2)' },
-		{ label: '今日拦截面容', value: '-', unit: '次', icon: 'Warning', color: '#F56C6C', shadow: 'rgba(245, 108, 108, 0.2)' }
+		{ label: '今日拦截次数', value: '-', unit: '次', icon: 'Warning', color: '#F56C6C', shadow: 'rgba(245, 108, 108, 0.2)' }
 	]);
 
 	const systemStatus = ref([
-		{ name: 'WinLogon 核心组件', desc: '系统登录凭据对接', active: true },
-		{ name: '生物识别传感器', desc: '未知 前往设置页面设置', active: false },
-		{ name: '人脸识别模型', desc: 'OpenCV', active: true }
+		{ name: 'WinLogon 核心组件', desc: '系统登录凭据对接组件', active: true },
+		{ name: '摄像头', desc: '未知 前往设置页面设置', active: false },
+		{ name: '人脸识别模型', desc: 'OpenCV', active: true },
+		{ name: '活体检测', desc: '正在检测...', active: false }
 	]);
 
 	const recentLogs = ref([]);
@@ -48,6 +50,20 @@
 		ElMessage.warning(error);
 	})
 
+	// 获取活体检测状态
+	invoke("get_liveness_status").then((result: any)=>{
+		if(result.data.enabled){
+			systemStatus.value[3].desc = '模型已加载';
+			systemStatus.value[3].active = true;
+		}else{
+			systemStatus.value[3].desc = '模型不存在，请配置';
+			systemStatus.value[3].active = false;
+		}
+	}).catch((error)=>{
+		systemStatus.value[3].desc = '状态查询失败';
+		systemStatus.value[3].active = false;
+	})
+
 	let tempCameraList = optionsStore.getOptionValueByKey('cameraList');
 	let tempCameraIndex = optionsStore.getOptionValueByKey('camera');
 	if(tempCameraList && tempCameraIndex){
@@ -60,9 +76,6 @@
 <template>
 	<div class="dashboard-wrapper">
 		<header class="page-header">
-			<div class="header-left">
-				<p>欢迎回来，管理员。系统当前运行状态：<span class="status-tag">安全</span></p>
-			</div>
 			<div class="header-right">
 				<el-button type="primary" icon="Camera" size="large" @click="$router.push('/faces/add')">
 					录入新面容
@@ -91,7 +104,7 @@
 		</el-row>
 
 		<el-row :gutter="24" class="content-section">
-			<el-col :span="10" style="height:100%;">
+			<el-col :span="12" style="height:100%;">
 				<div class="glass-card main-card">
 					<div class="card-title">
 						<span>服务监控中心</span>
@@ -112,8 +125,8 @@
 				</div>
 			</el-col>
 
-			<el-col :span="14" style="height:100%;">
-				<div class="glass-card main-card">
+			<el-col :span="12" style="height:100%;">
+				<div class="glass-card main-card stat-card">
 					<div class="card-title">
 						<span>今日登录统计</span>
 						<el-button link @click="$router.push('/logs')">
@@ -249,6 +262,11 @@
 		flex-direction: column;
 	}
 
+	.stat-card .card-title {
+		justify-content: flex-start;
+		gap: 12px;
+	}
+
 	.card-title {
 		display: flex;
 		justify-content: space-between;
@@ -320,7 +338,8 @@
 		border-radius: 8px;
 		background: #f8f9fb;
 		display: flex;
-		gap: 15px;
+		align-items: center;
+		gap: 12px;
 	}
 
 	.log-entry.error {
@@ -331,10 +350,15 @@
 		font-weight: 600;
 		color: #409EFF;
 		min-width: 60px;
+		flex-shrink: 0;
 	}
 
 	.log-action {
 		color: #606266;
 		font-size: 13px;
+		flex: 1;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 </style>

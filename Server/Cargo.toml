@@ -1,6 +1,6 @@
 [package]
 name = "winlogon"
-version = "0.1.0"
+version = "0.2.2"
 edition = "2024"
 
 [lib]
@@ -14,6 +14,11 @@ rustflags = ["-C", "link-arg=/DEF:exports.def"]
 log = "0.4.29"
 simplelog = "0.12.2"
 windows-core = "0.62.2"
+image = "0.25"
+anyhow = "1.0"
+tract-onnx = "0.21"
+lazy_static = "1.4"
+base64 = "0.22"
 
 [dependencies.windows]
 version = "0.62.2"

@@ -603,3 +603,83 @@ pub fn unlock(user_name: String, password: String) -> windows::core::Result<()> 
 
     Ok(())
 }
+
+// 获取活体检测状态
+#[tauri::command]
+pub fn get_liveness_status() -> Result<CustomResult, CustomResult> {
+    let model_path = ROOT_DIR.join("resources").join("detect.onnx");
+    let model_exists = model_path.exists();
+
+    Ok(CustomResult::success(None, Some(json!({
+        "model_exists": model_exists,
+        "model_path": model_path.to_str().unwrap_or("").to_string(),
+        "enabled": model_exists
+    }))))
+}
+
+// 使用 bcrypt 对密码进行哈希处理
+fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
+    const DEFAULT_COST: u32 = 12;
+    let hash = bcrypt::hash(password, DEFAULT_COST)?;
+    Ok(hash)
+}
+
+// 验证密码
+fn verify_password(password: &str, hash: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    let result = bcrypt::verify(password, hash)?;
+    Ok(result)
+}
+
+// 对密码进行哈希处理（返回哈希值）
+#[tauri::command]
+pub fn hash_password_cmd(password: String) -> Result<CustomResult, CustomResult> {
+    let hash = hash_password(&password)
+        .map_err(|e| CustomResult::error(Some(format!("密码哈希失败: {}", e)), None))?;
+
+    Ok(CustomResult::success(None, Some(json!({
+        "hash": hash
+    }))))
+}
+
+// 验证应用登录密码
+#[tauri::command]
+pub fn verify_app_password(password: String) -> Result<CustomResult, CustomResult> {
+    // 从本地存储获取保存的哈希值
+    let stored_hash = crate::utils::api::get_stored_password_hash();
+
+    if stored_hash.is_empty() {
+        return Err(CustomResult::error(Some("未设置登录密码".to_string()), None));
+    }
+
+    let is_valid = verify_password(&password, &stored_hash)
+        .map_err(|e| CustomResult::error(Some(format!("密码验证失败: {}", e)), None))?;
+
+    if is_valid {
+        Ok(CustomResult::success(Some("密码验证成功".to_string()), None))
+    } else {
+        Err(CustomResult::error(Some("密码错误".to_string()), None))
+    }
+}
+
+// 从本地存储获取保存的密码哈希
+fn get_stored_password_hash() -> String {
+    // 优先从 SQLite 数据库获取
+    let pool_guard = DB_POOL.lock().unwrap();
+    if let Some(ref pool) = *pool_guard {
+        if let Ok(conn) = pool.get() {
+            if let Ok(mut stmt) = conn.prepare("SELECT val FROM options WHERE key = ?") {
+                if let Ok(mut rows) = stmt.query(["app_password_hash"]) {
+                    if let Ok(Some(row)) = rows.next() {
+                        return row.get::<_, String>(0).unwrap_or_default();
+                    }
+                }
+            }
+        }
+    }
+
+    // 回退到 localStorage（前端存储）
+    // 注意：这里无法直接访问 JavaScript 的 localStorage
+    // 所以主要依赖数据库存储
+
+    String::new()
+}

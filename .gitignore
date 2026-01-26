@@ -7,9 +7,13 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies
 node_modules
+
+# Build outputs
 dist
 dist-ssr
+build
 *.local
 
 # Editor directories and files
@@ -23,13 +27,52 @@ dist-ssr
 *.sln
 *.sw?
 
-build/
+# Rust build
+target/
+
+# Tauri
+UI/src-tauri/gen/
+UI/src-tauri/target/
+
+# Large files and binaries
+*.cab
+*.zip
+*.7z
+*.tar.gz
+*.rar
+*.exe
+*.dll
+*.pdb
+
+# Test files
 test.html
 test.js
 test.css
 
-target
-UI/src-tauri/2
-UI.zip
-UI/src-tauri/bin/Microsoft.WebView2.FixedVersionRuntime.143.0.3650.139.x64.cab
-UI/src-tauri/nsis/installer.nsi
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Cache files
+*.cache
+*.tmp
+*.temp
+
+# Database files (if not needed in repo)
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Tauri resources (compiled)
+UI/src-tauri/src-tauri.conf.json
+!UI/src-tauri/src-tauri.conf.example.json
+
+# Specific large files to ignore
+UI/src-tauri/bin/
+*.onnx

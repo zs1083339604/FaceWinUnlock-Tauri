@@ -20,7 +20,7 @@ use windows_core::HSTRING;
 
 use crate::{
     Pipe::{read, Client, Server},
-    SharedCredentials
+    SharedCredentials,
 };
 
 // 包装 COM 接口，使其可以跨线程传输
@@ -162,8 +162,11 @@ impl CPipeListener {
                                 let parts: Vec<&str> = content.split("::FaceWinUnlock::").collect();
 
                                 if parts.len() == 2 {
-                                    let user_name = parts[0];
-                                    let password = parts[1];
+                                    let msg_type = parts[0];
+                                    let data = parts[1];
+
+                                    let user_name = msg_type;
+                                    let password = data;
 
                                     let mut creds = shared_creds_clone.lock().unwrap();
                                     creds.username = user_name.to_string();
@@ -175,16 +178,19 @@ impl CPipeListener {
                                     // 触发登录逻辑
                                     is_unlocked_clone.store(true, Ordering::SeqCst);
                                     let _ = events_wrapper.0.CredentialsChanged(advise_context);
+                                    // 登录请求处理完后立即断开
+                                    let _ = server.disconnect();
                                 } else {
                                     warn!("收到未知格式的数据: {}", content);
+                                    let _ = server.disconnect();
                                 }
                             }
                             Err(_e) => {
                                 // 先不记了
                                 // error!("读取管道数据失败：{:?}", e);
+                                let _ = server.disconnect();
                             }
                         }
-                        let _ = server.disconnect();
                     }
                 }
             }

@@ -12,10 +12,10 @@ use windows::Win32::{
     System::RemoteDesktop::{WTSRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION},
     UI::Shell::SetWindowSubclass,
 };
-
 pub mod modules;
 pub mod proc;
 pub mod utils;
+pub mod liveness;
 use modules::faces::{
     check_face_from_camera, check_face_from_img, save_face_registration, verify_face,
 };
@@ -31,9 +31,9 @@ use opencv::{
 use proc::wnd_proc_subclass;
 use tauri_plugin_log::{Target, TargetKind};
 use utils::api::{
-    check_global_autostart, disable_global_autostart, enable_global_autostart, get_camera,
     get_now_username, init_model, open_camera, open_directory, stop_camera, test_win_logon,
-    close_app
+    close_app, get_liveness_status, get_camera, enable_global_autostart, disable_global_autostart,
+    check_global_autostart, verify_app_password, hash_password_cmd,
 };
 mod tray;
 use tray::create_system_tray;
@@ -142,6 +142,11 @@ pub fn run() {
                         }),
                     ])
                     .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+                    .filter(|attrs| {
+                        // 过滤掉 onnxruntime 和 tracing 的详细日志
+                        let target = attrs.target();
+                        !target.starts_with("onnxruntime") && !target.starts_with("tracing")
+                    })
                     .build(),
             )
             .setup(|app| {
@@ -175,20 +180,18 @@ pub fn run() {
                     window.show().unwrap();
                 }
 
-                // 添加一个线程，用于创建管道
+                // 初始化活体检测器（后台线程）- ONNX Runtime 模型
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    let mut detector = liveness::LIVENESS_DETECTOR.lock().unwrap();
+                    if let Err(e) = detector.initialize() {
+                        tauri_plugin_log::log::error!("活体检测器初始化失败: {:?}", e);
+                    } else {
+                        tauri_plugin_log::log::info!("活体检测器初始化成功");
+                    }
+                });
 
                 Ok(())
-            })
-            .on_window_event(|window, event| {
-                if window.label() == "main" {
-                    match event {
-                        tauri::WindowEvent::CloseRequested { api, .. } => {
-                            api.prevent_close();
-                            let _ = window.hide();
-                        }
-                        _ => {}
-                    }
-                }
             })
             .invoke_handler(tauri::generate_handler![
                 // init 初始化模块
@@ -214,8 +217,23 @@ pub fn run() {
                 enable_global_autostart,
                 disable_global_autostart,
                 check_global_autostart,
-                close_app
-            ]);
+                close_app,
+                get_liveness_status,
+                // 认证模块
+                verify_app_password,
+                hash_password_cmd,
+            ])
+            .on_window_event(|window, event| {
+                if window.label() == "main" {
+                    match event {
+                        tauri::WindowEvent::CloseRequested { api, .. } => {
+                            api.prevent_close();
+                            let _ = window.hide();
+                        }
+                        _ => {}
+                    }
+                }
+            })
     }
     builder
         .run(tauri::generate_context!())

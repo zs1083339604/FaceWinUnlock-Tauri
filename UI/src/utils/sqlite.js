@@ -52,6 +52,10 @@ const databseTable = [
             { name: 'face_id', type: 'INTEGER' },
             // 是否成功解锁
             { name: 'is_unlock', type: 'INTEGER', notNull: true },
+            // 活体检测置信度
+            { name: 'liveness_confidence', type: 'REAL' },
+            // 失败原因
+            { name: 'fail_reason', type: 'TEXT' },
             // 上次更新时间
             { name: 'lastTime', type: 'TEXT', defaultValue: "datetime('now', 'localtime')" }
         ]

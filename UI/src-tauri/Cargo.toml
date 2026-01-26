@@ -1,6 +1,6 @@
 [package]
 name = "facewinunlock-tauri"
-version = "0.1.0"
+version = "0.2.2"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -43,6 +43,10 @@ tauri-plugin-fs = "2"
 r2d2_sqlite = "0.24.0"
 r2d2 = "0.8"
 lazy_static = "1.5.0"
+image = "0.25"
+anyhow = "1.0"
+onnxruntime = "0.0.14"
+bcrypt = "0.18"
 
 [dependencies.tauri-plugin-sql]
 features = ["sqlite"] # or "postgres", or "mysql"
