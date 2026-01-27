@@ -15,12 +15,18 @@ use windows::Win32::{
             WH_MOUSE_LL,
         },
     },
+    System::Threading::{
+        CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW, CREATE_NO_WINDOW, NORMAL_PRIORITY_CLASS,
+        STARTF_USESHOWWINDOW
+    },
 };
-use windows_core::HSTRING;
+use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+use windows_core::{HSTRING, PWSTR};
 
 use crate::{
     Pipe::{read, Client, Server},
-    SharedCredentials
+    SharedCredentials,
+    read_facewinunlock_registry
 };
 
 // 包装 COM 接口，使其可以跨线程传输
@@ -56,8 +62,8 @@ fn can_send() -> bool {
             .unwrap_or_default()
             .as_millis();
 
-        // UI端做限制
-        let delay: u128 = 500;
+        // 设置 1 秒防抖延迟
+        let delay: u128 = 1000;
 
         // 如果距离上次发送超过最小间隔，更新时间并允许发送
         if now - LAST_SEND_TIME >= delay {
@@ -75,7 +81,7 @@ unsafe extern "system" fn hook_fn(code: i32, wparam: WPARAM, lparam: LPARAM) -> 
         }
     }
 
-    unsafe { CallNextHookEx(Some(MOUSE_HOOK_ID), code, wparam, lparam) }
+    CallNextHookEx(None, code, wparam, lparam)
 }
 
 unsafe extern "system" fn keyboard_hook_fn(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -85,7 +91,7 @@ unsafe extern "system" fn keyboard_hook_fn(code: i32, wparam: WPARAM, lparam: LP
         }
     }
 
-    unsafe { CallNextHookEx(Some(MOUSE_HOOK_ID), code, wparam, lparam) }
+    CallNextHookEx(None, code, wparam, lparam)
 }
 
 impl CPipeListener {
@@ -203,11 +209,67 @@ impl CPipeListener {
                     info!("Client管道连接成功.");
                     client = Some(client_i);
                     break;
+                } else {
+                    // 连接失败，尝试启动 UI 进程
+                    if let Ok(exe_path) = read_facewinunlock_registry("EXE_PATH") {
+                        info!("管道未就绪，尝试启动 UI 进程: {}", exe_path);
+                        let mut si = STARTUPINFOW::default();
+                        si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
+                        si.dwFlags = STARTF_USESHOWWINDOW;
+                        si.wShowWindow = SW_HIDE.0 as u16; // 静默启动
+                        
+                        let mut pi = PROCESS_INFORMATION::default();
+                        
+                        // 命令行参数需要包含 --silent
+                        let mut command_line = format!("\"{}\" --silent", exe_path)
+                            .encode_utf16()
+                            .chain(std::iter::once(0))
+                            .collect::<Vec<u16>>();
+                        
+                        unsafe {
+                            let success = CreateProcessW(
+                                None,
+                                Some(PWSTR(command_line.as_mut_ptr())),
+                                None,
+                                None,
+                                false,
+                                CREATE_NO_WINDOW | NORMAL_PRIORITY_CLASS,
+                                None,
+                                None,
+                                &si,
+                                &mut pi,
+                            );
+                            
+                            if success.is_ok() {
+                                info!("UI 进程启动成功");
+                                // 关闭句柄，避免泄漏
+                                let _ = windows::Win32::Foundation::CloseHandle(pi.hProcess);
+                                let _ = windows::Win32::Foundation::CloseHandle(pi.hThread);
+                            } else {
+                                error!("UI 进程启动失败: {:?}", success.err());
+                            }
+                        }
+                    }
                 }
-                sleep(Duration::from_millis(100));
+                sleep(Duration::from_millis(1000)); // 启动后等待久一点再试
             }
 
             if let Some(client) = client {
+                // 检查是否启用了开机面容识别
+                let boot_face_recog_enabled = match read_facewinunlock_registry("BOOT_FACE_RECOG") {
+                    Ok(val) => val == "1",
+                    Err(_) => false,
+                };
+                
+                if boot_face_recog_enabled {
+                    info!("开机面容识别已启用，立即触发面容识别");
+                    // 等待一小段时间确保 UI 端管道已就绪
+                    sleep(Duration::from_millis(500));
+                    if let Err(e) = crate::Pipe::write(client.handle, String::from("run")) {
+                        error!("开机面容识别触发失败: {:?}", e);
+                    }
+                }
+                
                 while running_client.load(Ordering::SeqCst) {
                     if IS_SEND_RUN.load(Ordering::SeqCst) {
                         IS_SEND_RUN.store(false, Ordering::SeqCst);
@@ -215,6 +277,7 @@ impl CPipeListener {
                             println!("向客户端写入数据失败: {:?}", e);
                         }
                     }
+                    sleep(Duration::from_millis(10));
                 }
             }
 

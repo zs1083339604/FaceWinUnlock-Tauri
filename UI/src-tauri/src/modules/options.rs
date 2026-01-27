@@ -29,3 +29,13 @@ pub fn write_to_registry(items: Vec<RegistryItem>) -> Result<CustomResult, Custo
 
     Ok(CustomResult::success(None, None))
 }
+
+// 设置开机面容识别
+#[tauri::command]
+pub fn set_boot_face_recog(enable: bool) -> Result<CustomResult, CustomResult> {
+    let value = if enable { "1" } else { "0" };
+    write_to_registry(vec![RegistryItem {
+        key: String::from("BOOT_FACE_RECOG"),
+        value: value.to_string(),
+    }])
+}

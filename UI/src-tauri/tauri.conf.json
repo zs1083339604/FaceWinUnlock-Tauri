@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "facewinunlock-tauri-吾爱破解首发",
+        "title": "Facewinunlock",
         "width": 1280,
         "height": 720,
         "minWidth": 1280,
@@ -35,10 +35,10 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "E:/Code/Tauri/OpenSource/FaceWinUnlock-Tauri/Server/build/FaceWinUnlock-Tauri.dll": "resources/FaceWinUnlock-Tauri.dll",
-      "E:/Code/Rust/3rdparty/opencv/install/x64/vc17/bin/opencv_world4120.dll": "opencv_world4120.dll",
-      "E:/Code/Rust/Learn/opencv_rs/data/onnx/face_detection_yunet_2023mar.onnx": "resources/face_detection_yunet_2023mar.onnx",
-      "E:/Code/Rust/Learn/opencv_rs/data/onnx/face_recognition_sface_2021dec.onnx": "resources/face_recognition_sface_2021dec.onnx"
+      "resources/FaceWinUnlock-Tauri.dll": "resources/FaceWinUnlock-Tauri.dll",
+      "resources/opencv_world4120.dll": "opencv_world4120.dll",
+      "resources/face_detection_yunet_2023mar.onnx": "resources/face_detection_yunet_2023mar.onnx",
+      "resources/face_recognition_sface_2021dec.onnx": "resources/face_recognition_sface_2021dec.onnx"
     },
     "windows": {
       "nsis": {

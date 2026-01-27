@@ -186,36 +186,9 @@ pub unsafe extern "system" fn wnd_proc_subclass(
                                                         }
                                                     };
                                                     RETRY_DELAY.store(time_ms as i32, Ordering::SeqCst);
-                                                    // 锁屏连接管道，等待管道传来的运行
-                                                    IS_BREAK_THREAD.store(false, Ordering::SeqCst);
-                                                    // 开启一个新的线程
-                                                    std::thread::spawn(move || { 
-                                                        let mut server = Server::new(HSTRING::from(r"\\.\pipe\MansonWindowsUnlockRustClient"));
-                                                        let f_connected = server.connect();
-                                                        // 连接失败后退出循环
-                                                        if f_connected.is_err() {
-                                                            error!("管道连接失败：{:?}", f_connected.err());
-                                                        } else {
-                                                            while !IS_BREAK_THREAD.load(Ordering::SeqCst) {
-                                                                // 如果需要退出线程
-                                                                if IS_BREAK_THREAD.load(Ordering::SeqCst) {
-                                                                    break; 
-                                                                }
-                                                                // 等待管道的run命令
-                                                                if let Ok(content) =  read(server.handle) {
-                                                                    if content.contains("run") && !IS_RUN.load(Ordering::SeqCst) && MATCH_FAIL_COUNT.load(Ordering::SeqCst) < MAX_RETRY {
-                                                                        if can_retry() {
-                                                                            info!("运行面容识别代码");
-                                                                            run_before();
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
-                                                        
-                                                        IS_BREAK_THREAD.store(true, Ordering::SeqCst);
-                                                        info!("线程安全退出");
-                                                    });
+                                                    RETRY_DELAY.store(time_ms as i32, Ordering::SeqCst);
+                                                    // 锁屏连接管道
+                                                    start_listen_pipe();
                                                 } else {
                                                     // 按操作时间
                                                     let result: Result<String, _> = conn.query_row(
@@ -310,6 +283,46 @@ pub unsafe extern "system" fn wnd_proc_subclass(
     DefSubclassProc(hwnd, msg, wparam, lparam)
 }
 
+pub fn start_listen_pipe() {
+    if !IS_BREAK_THREAD.load(Ordering::SeqCst) {
+        // 如果线程已经在运行，则跳过
+        return;
+    }
+    
+    IS_BREAK_THREAD.store(false, Ordering::SeqCst);
+    // 开启一个新的线程
+    std::thread::spawn(move || { 
+        let mut server = Server::new(HSTRING::from(r"\\.\pipe\MansonWindowsUnlockRustClient"));
+        let f_connected = server.connect();
+        // 连接失败后退出循环
+        if f_connected.is_err() {
+            error!("管道连接失败：{:?}", f_connected.err());
+        } else {
+            while !IS_BREAK_THREAD.load(Ordering::SeqCst) {
+                // 如果需要退出线程
+                if IS_BREAK_THREAD.load(Ordering::SeqCst) {
+                    break; 
+                }
+                // 等待管道的run命令
+                if let Ok(content) =  read(server.handle) {
+                    if content.contains("run") && !IS_RUN.load(Ordering::SeqCst) && MATCH_FAIL_COUNT.load(Ordering::SeqCst) < MAX_RETRY {
+                        if can_retry() {
+                            info!("运行面容识别代码");
+                            run_before();
+                        }
+                    }
+                } else {
+                    // 读取失败（例如管道断开），休眠一段时间防止空转
+                    sleep(Duration::from_millis(100));
+                }
+            }
+        }
+        
+        IS_BREAK_THREAD.store(true, Ordering::SeqCst);
+        info!("线程安全退出");
+    });
+}
+
 fn run_before() {
     // 先打开摄像头
     let result = open_camera(None, CAMERA_INDEX.load(Ordering::SeqCst));
@@ -380,6 +393,7 @@ fn run() -> Result<bool, String> {
                     _create_time,
                 ) = row.map_err(|e| format!("获取1条面容数据失败：{:?}", e))?;
 
+                let start_time = SystemTime::now();
                 if json_data.lock {
                     // 锁定了账户，直接跳过
                     continue;
@@ -418,6 +432,11 @@ fn run() -> Result<bool, String> {
                         Err(e) => {
                             let err_msg = format!("特征提取失败: {}", e);
                             if err_msg.contains("未检测到人脸") {
+                                // 检查是否检测人脸超时（5秒），避免无人时持续消耗资源
+                                if start_time.elapsed().map(|d| d.as_secs()).unwrap_or(0) >= 5 {
+                                    info!("未检测到人脸超时，自动退出识别以节省资源");
+                                    return Ok(false);
+                                }
                                 // 未检测到人脸不动
                                 sleep(Duration::from_millis(200));
                                 continue;

@@ -173,10 +173,16 @@ pub fn deploy_core_components() -> Result<CustomResult, CustomResult> {
         ));
     }
     // 写入dll日志路径
-    write_to_registry(vec![RegistryItem {
-        key: String::from("DLL_LOG_PATH"),
-        value: path_str.unwrap().to_string(),
-    }])?;
+    write_to_registry(vec![
+        RegistryItem {
+            key: String::from("DLL_LOG_PATH"),
+            value: path_str.unwrap().to_string(),
+        },
+        RegistryItem {
+            key: String::from("EXE_PATH"),
+            value: ROOT_DIR.join("facewinunlock-tauri.exe").to_str().unwrap_or("").to_string(),
+        }
+    ])?;
 
     Ok(CustomResult::success(None, None))
 }
