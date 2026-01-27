@@ -1,12 +1,22 @@
 <script setup lang="ts">
-	import { ref, reactive } from 'vue'
+	import { ref, reactive, onMounted, computed } from 'vue'
 	import { ElMessage, ElMessageBox } from 'element-plus'
 	import {
 		Unlock,
 		Operation,
+		Tools,
 		VideoCamera,
 		InfoFilled,
-		Refresh
+		Refresh,
+		Lock,
+		Setting,
+		Loading,
+		CircleCheck,
+		WarningFilled,
+		FolderOpened,
+		Key,
+		View,
+		Hide
 	} from '@element-plus/icons-vue'
 	import { useOptionsStore } from '../stores/options'
 	import { invoke } from '@tauri-apps/api/core'
@@ -16,6 +26,7 @@
 	import { appCacheDir } from '@tauri-apps/api/path';
 	import { useRouter } from 'vue-router'
 	import { openUrl } from '@tauri-apps/plugin-opener';
+	import { useAuthStore } from '../stores/auth';
 
 	// 自启判断
 	invoke("check_global_autostart").then((result)=>{
@@ -26,11 +37,36 @@
 
 	const optionsStore = useOptionsStore();
 	const router = useRouter();
+	const authStore = useAuthStore();
+
+	// 添加计算属性来判断是否设置了密码
+	const hasPassword = computed(() => !!authStore.passwordHash);
 
 	const activeTab = ref('app')
 
 	const cameraList = ref([]);
 	const cameraListLoading = ref(false);
+
+	// 登录安全配置
+	const securityConfig = reactive({
+		loginEnabled: false,
+		password: '',
+		confirmPassword: '',
+		showPassword: false,
+		showConfirmPassword: false,
+		loading: false,
+		saving: false,
+		expireMinutes: 0
+	});
+
+	// 登录过期时间选项
+	const expireOptions = authStore.getExpireOptions();
+
+	// 初始化安全配置
+	onMounted(() => {
+		securityConfig.loginEnabled = authStore.loginEnabled && !!authStore.passwordHash;
+		securityConfig.expireMinutes = authStore.getExpireMinutes();
+	});
 
 	const config = reactive({
 		camera: optionsStore.getOptionValueByKey('camera') || "-1",
@@ -44,6 +80,34 @@
 
 	const dllConfig = reactive({
 		showTile: optionsStore.getOptionValueByKey('showTile') ? (optionsStore.getOptionValueByKey('showTile') == 'false' ? false : true) : true
+	})
+
+	// 活体检测配置
+	const livenessConfig = reactive({
+		enabled: optionsStore.getOptionValueByKey('livenessEnabled') ? (optionsStore.getOptionValueByKey('livenessEnabled') == 'false' ? false : true) : true,
+		threshold: parseFloat(optionsStore.getOptionValueByKey('livenessThreshold')) || 0.75,
+		modelStatus: {
+			exists: false,
+			path: '',
+			loading: true
+		}
+	})
+
+	// 获取活体检测模型状态
+	const fetchLivenessStatus = () => {
+		livenessConfig.modelStatus.loading = true;
+		invoke("get_liveness_status").then((result: any) => {
+			livenessConfig.modelStatus.exists = result.data.model_exists;
+			livenessConfig.modelStatus.path = result.data.model_path;
+			livenessConfig.modelStatus.loading = false;
+		}).catch((error) => {
+			livenessConfig.modelStatus.loading = false;
+			warn(formatObjectString("获取活体检测状态失败: ", error));
+		});
+	}
+
+	onMounted(() => {
+		fetchLivenessStatus();
 	})
 
 	const refreshCameraList = ()=>{
@@ -111,7 +175,7 @@
 			if(errorArray.length > 0){
 				ElMessage.warning({
                     dangerouslyUseHTMLString: true,
-                    message: `${result.length} 个配置保存失败: <br />${result.join("<br />")}`
+                    message: `${errorArray.length} 个配置保存失败: <br />${errorArray.join("<br />")}`
                 })
 			}else{
 				ElMessage.success("保存成功");
@@ -132,7 +196,7 @@
 			if(errorArray.length > 0){
 				ElMessage.warning({
                     dangerouslyUseHTMLString: true,
-                    message: `${result.length} 个配置保存失败: <br />${result.join("<br />")}`
+                    message: `${errorArray.length} 个配置保存失败: <br />${errorArray.join("<br />")}`
                 })
 			}else{
 				ElMessage.success("保存成功");
@@ -142,6 +206,27 @@
 			ElMessage.error(info);
 			errorLog(info);
 		})
+	}
+
+	// 保存活体检测配置
+	const saveLivenessConfig = () => {
+		optionsStore.saveOptions({
+			livenessEnabled: livenessConfig.enabled.toString(),
+			livenessThreshold: livenessConfig.threshold.toString()
+		}).then((errorArray)=>{
+			if(errorArray.length > 0){
+				ElMessage.warning({
+                    dangerouslyUseHTMLString: true,
+                    message: `${errorArray.length} 个配置保存失败: <br />${errorArray.join("<br />")}`
+                })
+			}else{
+				ElMessage.success("保存成功");
+			}
+		}).catch((error)=>{
+			const info = formatObjectString("保存活体检测配置失败: ", error);
+			ElMessage.error(info);
+			errorLog(info);
+		});
 	}
 
 	const clearCache = () => {
@@ -164,7 +249,7 @@
 			// 	1. 用win32 Api单独写一个程序，点到这里唤醒程序，等本程序退出后，清除缓存
 			// 	2. 用win32包裹此程序启动，启动时先启动win32的程序，判断缓存目录是否有清除标记，如果有就清除缓存，并启动本软件，如果没有直接启动本软件
 			// 	   当走到这里时，给缓存目录添加标记，等待下一次开启自动清除
-			ElMessageBox.alert('数据库缓存已清除，即将打开软件缓存目录，请在关闭软件后，删除 EBWebView 文件夹', '提示', {
+			ElMessageBox.alert('数据库缓存已清除，即将打开软件缓存目录，请在关闭软件WebView 文件夹后，删除 EB', '提示', {
 				confirmButtonText: '确定',
 				callback: () => {
 					appCacheDir().then((result)=>{
@@ -177,6 +262,108 @@
 				},
 			})
 		})
+	}
+
+	// 保存登录密码设置
+	const saveLoginSecurity = async () => {
+		if (securityConfig.loginEnabled) {
+			// 用户是否要修改密码（输入了新密码）
+			const wantsToChangePassword = !!securityConfig.password;
+
+			// 如果已设置密码且未输入新密码，只需要保存过期时间等设置
+			if (authStore.passwordHash && !wantsToChangePassword) {
+				securityConfig.saving = true;
+				try {
+					authStore.setExpireMinutes(securityConfig.expireMinutes);
+					ElMessage.success('登录设置已保存');
+				} catch (error) {
+					const info = formatObjectString("保存登录设置失败: ", error);
+					ElMessage.error(info);
+					errorLog(info);
+				} finally {
+					securityConfig.saving = false;
+				}
+				return;
+			}
+
+			// 以下是需要修改密码的情况
+			if (!securityConfig.password) {
+				ElMessage.warning('请输入登录密码');
+				return;
+			}
+			if (securityConfig.password.length < 4) {
+				ElMessage.warning('密码长度至少4位');
+				return;
+			}
+			if (securityConfig.password !== securityConfig.confirmPassword) {
+				ElMessage.warning('两次输入的密码不一致');
+				return;
+			}
+
+			securityConfig.saving = true;
+			try {
+				// 先验证当前密码（如果是修改密码）
+				if (authStore.passwordHash && securityConfig.password) {
+					const verifyResult = await invoke('verify_app_password', { password: securityConfig.password });
+					if (verifyResult.code === 200) {
+						ElMessage.warning('新密码不能与当前密码相同');
+						securityConfig.saving = false;
+						return;
+					}
+				}
+
+				// 设置新密码
+				const result = await invoke('hash_password_cmd', { password: securityConfig.password });
+				if (result.code === 200) {
+					// 保存到数据库
+					await optionsStore.saveOptions({
+						app_password_hash: result.data.hash
+					});
+					// 更新本地状态
+					authStore.passwordHash = result.data.hash;
+					authStore.loginEnabled = true;
+					authStore.setExpireMinutes(securityConfig.expireMinutes);
+					localStorage.setItem('auth_login_enabled', 'true');
+					localStorage.setItem('auth_password_hash', result.data.hash);
+					ElMessage.success('登录密码设置成功');
+					securityConfig.password = '';
+					securityConfig.confirmPassword = '';
+				} else {
+					ElMessage.error('密码设置失败');
+				}
+			} catch (error) {
+				const info = formatObjectString("保存登录密码失败: ", error);
+				ElMessage.error(info);
+				errorLog(info);
+			} finally {
+				securityConfig.saving = false;
+			}
+		} else {
+			// 禁用登录
+			try {
+				// 清除数据库中的密码
+				// 先查询是否存在
+				const existing = optionsStore.getOptionByKey('app_password_hash');
+				if (existing.index !== -1) {
+					await optionsStore.saveOptions({
+						app_password_hash: ''
+					});
+				}
+				// 更新本地状态
+				authStore.clearPassword();
+				ElMessage.success('已禁用应用登录');
+			} catch (error) {
+				const info = formatObjectString("禁用登录失败: ", error);
+				ElMessage.error(info);
+				errorLog(info);
+			}
+		}
+	}
+
+	// 登出当前用户
+	const handleLogout = () => {
+		authStore.logout();
+		router.push('/login');
 	}
 
 	const uninstallDll = () => {
@@ -221,28 +408,48 @@
 						</el-icon>
 						软件配置
 					</div>
+					<div class="nav-item" :class="{ active: activeTab === 'security' }" @click="activeTab = 'security'">
+						<el-icon>
+							<Key />
+						</el-icon>
+						登录安全
+					</div>
+					<div class="nav-item" :class="{ active: activeTab === 'liveness' }" @click="activeTab = 'liveness'">
+						<el-icon>
+							<Lock />
+						</el-icon>
+						活体检测
+					</div>
 					<div class="nav-item" :class="{ active: activeTab === 'dll' }" @click="activeTab = 'dll'">
 						<el-icon>
 							<Unlock />
 						</el-icon>
 						系统集成 (DLL)
 					</div>
+					<div class="nav-item" :class="{ active: activeTab === 'maintenance' }" @click="activeTab = 'maintenance'">
+						<el-icon>
+							<Tools />
+						</el-icon>
+						维护与卸载
+					</div>
 				</div>
-				<div>
-					<el-button type="primary" size="large" icon="Cpu"
-						@click="activeTab === 'app' ? saveAppConfig() : applyDllSettings()">
-						{{ activeTab === 'app' ? '保存本地配置' : '同步至系统注册表' }}
-					</el-button>
-					<el-button type="info" plain @click="openUrl('https://github.com/zs1083339604/FaceWinUnlock-Tauri')">Github</el-button>
-					<el-button type="danger" plain @click="openUrl('https://gitee.com/lieranhuasha/face-win-unlock-tauri')">Gitee</el-button>
-				</div>
+					<div>
+						<el-button v-if="activeTab !== 'maintenance' && activeTab !== 'security'" type="primary" size="large"
+							@click="activeTab === 'app' ? saveAppConfig() : (activeTab === 'liveness' ? saveLivenessConfig() : applyDllSettings())">
+							{{ activeTab === 'dll' ? '同步至系统注册表' : '保存' }}
+						</el-button>
+						<el-button v-if="activeTab === 'security'" type="primary" size="large" :loading="securityConfig.saving"
+							@click="saveLoginSecurity">
+							保存
+						</el-button>
+					</div>
 				
 			</div>
 
 			<div class="options-content">
 				<div v-if="activeTab === 'app'" class="fade-in">
 					<el-row :gutter="40">
-						<el-col :span="14">
+						<el-col :span="24">
 							<section class="config-group">
 								<h4 class="group-title">识别参数</h4>
 								<el-form label-position="top">
@@ -340,44 +547,127 @@
 								</div>
 							</section>
 						</el-col>
+					</el-row>
+					</div>
 
-						<el-col :span="10">
-							<section class="config-group danger-zone">
-								<h4 class="group-title red-text">维护与卸载</h4>
-								<div class="danger-box">
-									<div class="danger-item">
-										<span>清除数据库和软件缓存</span>
-										<el-button type="warning" size="small" plain @click="clearCache">点击清除</el-button>
+					<div v-if="activeTab === 'maintenance'" class="fade-in">
+						<el-row :gutter="40">
+							<el-col :span="24">
+								<section class="config-group danger-zone">
+									<h4 class="group-title red-text">维护与卸载</h4>
+									<div class="danger-box">
+										<div class="danger-item">
+											<span>清除数据库和软件缓存</span>
+											<el-button type="warning" size="small" plain @click="clearCache">点击清除</el-button>
+										</div>
+										<el-divider />
+										<div class="danger-item">
+											<span>重新初始化</span>
+											<el-button type="warning" size="small" plain @click="$router.push('/init')">点击初始化</el-button>
+										</div>
+										<p class="danger-footer">
+											 需要管理员权限
+										</p>
+										<el-divider />
+										<div class="danger-item">
+											<span>卸载WinLogon解锁组件</span>
+											<el-button type="danger" size="small" @click="uninstallDll">点击卸载</el-button>
+										</div>
+										<p class="danger-footer">
+											 需要管理员权限
+										</p>
 									</div>
-									<el-divider />
-									<div class="danger-item">
-										<span>重新初始化</span>
-										<el-button type="warning" size="small" plain @click="$router.push('/init')">点击初始化</el-button>
+								</section>
+							</el-col>
+						</el-row>
+					</div>
+
+					<div v-if="activeTab === 'security'" class="fade-in">
+					<el-row :gutter="40">
+						<el-col :span="24">
+							<section class="config-group">
+								<h4 class="group-title">
+									<el-icon><Key /></el-icon>
+									应用登录密码
+								</h4>
+
+								<!-- 启用登录开关 -->
+								<div class="option-row">
+									<div class="row-text">
+										<p class="label">启用应用登录</p>
+										<p class="sub">打开应用时需要输入密码验证，增强安全性</p>
 									</div>
-									<p class="danger-footer">
-										<el-icon>
-											<InfoFilled />
-										</el-icon> 初始化需要管理员权限
-									</p>
-									<el-divider />
-									<div class="danger-item">
-										<span>卸载WinLogon解锁组件</span>
-										<el-button type="danger" size="small" @click="uninstallDll">点击卸载</el-button>
-									</div>
-									<p class="danger-footer">
-										<el-icon>
-											<InfoFilled />
-										</el-icon> 卸载操作需要管理员权限
-									</p>
+									<el-switch v-model="securityConfig.loginEnabled" />
+								</div>
+
+								<!-- 密码输入框（启用登录时显示） -->
+								<div v-if="securityConfig.loginEnabled" class="password-form">
+									<el-form label-position="top">
+										<el-form-item label="设置登录密码(为空则不修改)">
+											<el-input
+												v-model="securityConfig.password"
+												type="password"
+												show-password
+												placeholder="请输入密码（至少4位）"
+												clearable
+											/>
+										</el-form-item>
+										<el-form-item label="确认密码">
+											<el-input
+												v-model="securityConfig.confirmPassword"
+												type="password"
+												show-password
+												placeholder="请再次输入密码"
+												clearable
+											/>
+										</el-form-item>
+									</el-form>
+								</div>
+
+								<!-- 提示信息 -->
+								<div class="security-tips">
+									<el-alert
+										v-if="securityConfig.loginEnabled"
+										title="安全提示"
+										type="success"
+										description="密码已启用。密码使用 bcrypt 算法加密本地存储。"
+										show-icon
+										:closable="false"
+									/>
+									<el-alert
+										v-else
+										title="安全提示"
+										type="info"
+										description="当前未设置应用登录密码，任何人都可以直接打开应用。如需增强安全性，请启用登录并设置密码。"
+										show-icon
+										:closable="false"
+									/>
 								</div>
 							</section>
+
+							<!-- 登录过期时间设置（启用登录时显示） -->
+							<div v-if="securityConfig.loginEnabled" class="expire-config">
+								<div class="option-row">
+									<div class="row-text">
+										<p class="label">登录过期时间</p>
+										<p class="sub">登录状态过期后需要重新输入密码</p>
+									</div>
+									<el-select v-model="securityConfig.expireMinutes" style="width: 200px">
+										<el-option
+											v-for="option in expireOptions"
+											:key="option.value"
+											:label="option.label"
+											:value="option.value"
+										/>
+									</el-select>
+								</div>
+							
+							</div>
 						</el-col>
 					</el-row>
 				</div>
 
 				<div v-if="activeTab === 'dll'" class="fade-in">
-					<el-alert title="系统级配置修改" type="info" description="以下选项通过 Rust 后端同步至 Windows 注册表，修改后需要重新锁定计算机生效。"
-						show-icon :closable="false" />
 
 					<div class="dll-settings">
 						<div class="option-row">
@@ -388,6 +678,52 @@
 							<el-switch v-model="dllConfig.showTile" />
 						</div>
 					</div>
+					<el-alert title="系统级配置修改" type="info" description="以上选项通过 Rust 后端同步至 Windows 注册表，修改后需要重新锁定计算机生效。"
+						show-icon :closable="false" />
+				</div>
+
+				<div v-if="activeTab === 'liveness'" class="fade-in">
+					<el-row :gutter="40">
+						<el-col :span="24">
+							<section class="config-group">
+								<h4 class="group-title">
+									<el-icon><Lock /></el-icon>
+									活体检测配置
+								</h4>
+
+								<!-- 活体检测开关 -->
+								<div class="option-row">
+									<div class="row-text">
+										<p class="label">启用活体检测(静默)</p>
+										<p class="sub">在解锁时进行活体验证，防止照片/视频攻击</p>
+									</div>
+									<el-switch v-model="livenessConfig.enabled" :disabled="!livenessConfig.modelStatus.exists" />
+								</div>
+
+								<!-- 阈值设置 -->
+								<div class="option-row">
+									<div class="row-text">
+										<p class="label">假体置信度阈值</p>
+										<p class="sub">阈值越高，安全性越好，假脸被当作真人的概率越低，建议 0.5~0.7</p>
+									</div>
+									<el-input-number
+										v-model="livenessConfig.threshold"
+										:min="0.5"
+										:max="0.99"
+										:step="0.01"
+										:precision="2"
+										:disabled="!livenessConfig.enabled"
+										style="width: 120px;"
+									/>
+								</div>
+
+								<div class="option-desc">
+									<el-alert title="注意：" type="info" description="阈值越高，对假脸的识别越严格，但真人被误判为假脸的概率也会增加，经测试，该功能对光照要求高，尽量保持较好的光照环境"
+						            show-icon :closable="false" />
+								</div>
+							</section>
+						</el-col>
+					</el-row>
 				</div>
 			</div>
 		</div>
@@ -550,5 +886,157 @@
 	@keyframes fadeIn {
 		from { opacity: 0; transform: translateY(5px); }
 		to { opacity: 1; transform: translateY(0); }
+	}
+
+	/* 活体检测相关样式 */
+	.model-status-card {
+		background: #f5f7fa;
+		border-radius: 10px;
+		padding: 16px;
+		margin-bottom: 20px;
+		border: 1px solid #e4e7ed;
+	}
+
+	.model-status-card.status-success {
+		background: #f0f9eb;
+		border-color: #c2e7b0;
+	}
+
+	.model-status-card.status-warning {
+		background: #fdf6ec;
+		border-color: #f5dab1;
+	}
+
+	.model-status-card .status-header {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-weight: 600;
+		margin-bottom: 12px;
+		color: #303133;
+	}
+
+	.model-status-card .status-content {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 14px;
+		color: #606266;
+	}
+
+	.model-status-card .status-content .status-info {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.model-status-card .status-content .status-info .sub {
+		font-size: 12px;
+		color: #909399;
+		margin-top: 4px;
+	}
+
+	.model-status-card .status-success .status-content {
+		color: #67c23a;
+	}
+
+	.model-status-card .status-warning .status-content {
+		color: #e6a23c;
+	}
+
+	.option-desc {
+		background: #f4f4f5;
+		border-radius: 8px;
+		padding: 16px;
+		margin-top: 20px;
+	}
+
+	.option-desc p {
+		margin: 6px 0;
+		font-size: 13px;
+		color: #606266;
+	}
+
+	.option-desc code {
+		background: #e6a23c;
+		color: #fff;
+		padding: 2px 6px;
+		border-radius: 4px;
+		font-size: 12px;
+	}
+
+	.info-box {
+		background: #f5f7fa;
+		border-radius: 10px;
+		padding: 20px;
+		border: 1px solid #e4e7ed;
+	}
+
+	.info-box h5 {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		margin: 16px 0 10px 0;
+		font-size: 14px;
+		color: #303133;
+	}
+
+	.info-box h5:first-child {
+		margin-top: 0;
+	}
+
+	.info-box p {
+		font-size: 13px;
+		color: #606266;
+		line-height: 1.6;
+		margin: 0;
+	}
+
+	.info-box ul {
+		margin: 10px 0 0 0;
+		padding-left: 20px;
+	}
+
+	.info-box li {
+		font-size: 13px;
+		color: #606266;
+		line-height: 1.8;
+	}
+
+	/* 登录安全设置样式 */
+	.password-form {
+		background: #f5f7fa;
+		border-radius: 10px;
+		padding: 20px;
+		margin: 16px 0;
+		border: 1px solid #e4e7ed;
+	}
+
+	.security-tips {
+		margin-top: 20px;
+	}
+
+	.expire-config {
+		background: #f5f7fa;
+		border-radius: 10px;
+		padding: 20px;
+		margin: 16px 0;
+		border: 1px solid #e4e7ed;
+	}
+
+	.expire-tips {
+		margin-top: 16px;
+	}
+
+	.session-info {
+		display: flex;
+		align-items: center;
+		gap: 16px;
+		padding: 16px;
+		background: #f0f9eb;
+		border-radius: 10px;
+		border: 1px solid #c2e7b0;
+		width: 100%;
+		box-sizing: border-box;
+		flex-wrap: wrap;
 	}
 </style>

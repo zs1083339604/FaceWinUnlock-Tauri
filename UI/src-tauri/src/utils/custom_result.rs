@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-#[derive(serde::Serialize)]
+#[derive(Debug, serde::Serialize)]
 pub struct CustomResult {
     pub code: i32,
     pub msg: String,

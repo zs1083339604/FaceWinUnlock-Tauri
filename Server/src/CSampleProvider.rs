@@ -27,7 +27,6 @@ impl SampleProvider {
     pub fn new() -> Self {
         info!("SampleProvider::new - 创建凭据提供程序实例");
         dll_add_ref(); // 增加DLL引用计数
-
         // 创建共享的凭据列表实例
         let shared = Arc::new(Mutex::new(SharedCredentials {
             username: String::new(),

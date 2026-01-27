@@ -23,9 +23,7 @@ pub mod CSampleProvider;
 pub mod CSampleCredential;
 pub mod CPipeListener;
 pub mod Pipe;
-
 use CSampleProvider::SampleProvider;
-
 // 全局引用计数器，用于管理DLL的生命周期
 // 当引用计数为0时，系统可以安全卸载DLL
 static G_REF_COUNT: AtomicI32 = AtomicI32::new(0);
@@ -273,19 +271,23 @@ pub unsafe extern "system" fn DllMain(
             // 初始化日志系统
             if let Ok(file) = File::create(log_path + "\\facewinunlock.log") {
                 // 日志时间太麻烦，不搞了，没有日期影响不大
-                if let Ok(config) = ConfigBuilder::new().set_time_offset_to_local(){
-                    match CombinedLogger::init(
-                        vec![
-                            WriteLogger::new(
-                                LevelFilter::Info, 
-                                config.build(), 
-                                file
-                            ),
-                        ]
-                    ) {
-                        Ok(_) => info!("日志系统初始化成功"),
-                        _ => {},
-                    }
+                let mut config = ConfigBuilder::new();
+                let _ = config.set_time_offset_to_local();
+                config.add_filter_ignore_str("tract_onnx");  // 过滤 tract_onnx 库的日志
+                config.add_filter_ignore_str("tract_core");  // 过滤 tract_core 库的日志
+                config.add_filter_ignore_str("tract");       // 过滤 tract 库的日志
+                let config = config.build();
+                match CombinedLogger::init(
+                    vec![
+                        WriteLogger::new(
+                            LevelFilter::Info,
+                            config,
+                            file
+                        ),
+                    ]
+                ) {
+                    Ok(_) => info!("日志系统初始化成功"),
+                    _ => {},
                 }
             }
             

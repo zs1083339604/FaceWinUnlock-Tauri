@@ -68,7 +68,7 @@
 	<div class="face-list-container">
 		<div class="list-header">
 			<div class="stats">
-				<span class="total-text">已注册面容: <strong>{{ faceList.length }}</strong> / 无限</span>
+				<span class="total-text">人脸数量: <strong>{{ faceList.length }}</strong> 个</span>
 			</div>
 			<div class="actions">
 				<el-input v-model="searchQuery" placeholder="搜索备注或用户名..." style="width: 250px; margin-right: 15px"

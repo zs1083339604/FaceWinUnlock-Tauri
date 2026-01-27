@@ -27,12 +27,33 @@
 	// 解析登录日志
 	const parseUnlockLogs = (data) => {
 		if (!Array.isArray(data)) return [];
-		return data.map(item => ({
-			createTime: item.lastTime,
-			level: 'INFO',
-			module: '登录',
-			content: item.is_unlock === 1 ? '登录成功' : '登录失败'
-		}));
+		return data.map(item => {
+			// 构建内容
+			let content = '';
+			if (item.is_unlock === 1) {
+				// 登录成功
+				content = '登录成功';
+				if (item.liveness_confidence !== null && item.liveness_confidence !== undefined) {
+					content += `，活体检测置信度均值${parseFloat(item.liveness_confidence).toFixed(4)}`;
+				}
+			} else {
+				// 登录失败
+				if (item.fail_reason) {
+					content = `登录失败 - ${item.fail_reason}`;
+				} else {
+					content = '登录失败';
+				}
+				if (item.liveness_confidence !== null && item.liveness_confidence !== undefined) {
+					content += `，活体检测置信度${parseFloat(item.liveness_confidence).toFixed(4)}`;
+				}
+			}
+			return {
+				createTime: item.lastTime,
+				level: item.is_unlock === 1 ? 'INFO' : 'ERROR',
+				module: '登录',
+				content: content
+			};
+		});
 	};
 
 	const formatModuleName = (module) => {

@@ -158,25 +158,28 @@ pub fn deploy_core_components() -> Result<CustomResult, CustomResult> {
             )
         })?;
 
-    // 创建dll日志路径
-    let path = ROOT_DIR.join("logs");
-    if !path.exists() {
-        fs::create_dir_all(&path)
+    // 创建日志目录
+    let logs_path = ROOT_DIR.join("logs");
+
+    if !logs_path.exists() {
+        fs::create_dir_all(&logs_path)
             .map_err(|e| CustomResult::error(Some(format!("创建 logs 文件夹失败: {}", e)), None))?;
     }
 
-    let path_str = path.to_str();
-    if path_str.is_none() {
-        return Err(CustomResult::error(
-            Some(String::from("获取软件日志目录失败")),
-            None,
-        ));
-    }
-    // 写入dll日志路径
-    write_to_registry(vec![RegistryItem {
-        key: String::from("DLL_LOG_PATH"),
-        value: path_str.unwrap().to_string(),
-    }])?;
+    // 写入注册表配置
+    let logs_path_str = logs_path.to_str().unwrap_or("").to_string();
+    let exe_path = ROOT_DIR.to_str().unwrap_or("").to_string();
+
+    write_to_registry(vec![
+        RegistryItem {
+            key: String::from("DLL_LOG_PATH"),
+            value: logs_path_str,
+        },
+        RegistryItem {
+            key: String::from("APP_ROOT_PATH"),
+            value: exe_path,
+        },
+    ])?;
 
     Ok(CustomResult::success(None, None))
 }
