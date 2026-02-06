@@ -15,8 +15,13 @@ use windows::Win32::{
             WH_MOUSE_LL,
         },
     },
+    System::Threading::{
+        CreateProcessW, PROCESS_INFORMATION, STARTUPINFOW, CREATE_NO_WINDOW, NORMAL_PRIORITY_CLASS,
+        STARTF_USESHOWWINDOW
+    },
 };
-use windows_core::HSTRING;
+use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+use windows_core::{HSTRING, PWSTR};
 
 use crate::{
     read_facewinunlock_registry, Pipe::{read, Client, Server}, SharedCredentials
@@ -55,7 +60,7 @@ unsafe extern "system" fn hook_fn(code: i32, wparam: WPARAM, lparam: LPARAM) -> 
         }
     }
 
-    unsafe { CallNextHookEx(Some(MOUSE_HOOK_ID), code, wparam, lparam) }
+    CallNextHookEx(None, code, wparam, lparam)
 }
 
 unsafe extern "system" fn keyboard_hook_fn(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {

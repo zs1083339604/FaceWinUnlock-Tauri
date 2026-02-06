@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "facewinunlock-tauri-吾爱破解首发",
+        "title": "Facewinunlock",
         "width": 1280,
         "height": 720,
         "minWidth": 1280,
